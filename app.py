@@ -1,5 +1,6 @@
 from pathlib import Path
-import pandas as pd
+import csv
+import html
 import streamlit as st
 
 st.set_page_config(
@@ -23,34 +24,76 @@ html, body, [data-testid="stAppViewContainer"]{background:#fbfdfb;color:#101410}
 .hero{background:linear-gradient(135deg,#080b09 0%,#111713 68%,#a6f3b5 180%);border:1px solid #27352b;border-radius:24px;padding:30px 32px;margin-bottom:18px;box-shadow:0 14px 40px rgba(0,0,0,.12)}
 .hero h1{color:#fff;margin:6px 0 0;font-size:2.25rem}.hero p{color:#dce8df;line-height:1.8;margin:.7rem 0 0}.tag{display:inline-block;background:#c9ffd5;color:#07150b;border-radius:999px;padding:5px 11px;margin-right:6px;font-size:.76rem;font-weight:850}
 .kpi{background:#fff;border:1px solid #dce7df;border-radius:16px;padding:16px 18px;min-height:128px;box-shadow:0 6px 18px rgba(10,30,18,.05)}
-.kpi .label{font-size:.82rem;color:#58675e}.kpi .value{font-size:1.46rem;font-weight:850;color:#0c1710;margin:.3rem 0}.kpi .note{font-size:.78rem;color:#6b786f;line-height:1.55}.panel{background:#fff;border:1px solid #dce7df;border-radius:16px;padding:18px 20px;margin:.55rem 0 1rem}.good{border-left:5px solid #61d881;background:#f3fff6}.warn{border-left:5px solid #e5b34f;background:#fffaf0}.risk{border-left:5px solid #db6a6a;background:#fff5f5}.small{font-size:.82rem;color:#657169}.titleline{font-weight:900;font-size:1.1rem;color:#0b1710;margin-bottom:.3rem}.pill{display:inline-block;border:1px solid #cfe5d4;border-radius:999px;padding:4px 9px;margin:2px;background:#f6fff8}.mono{direction:ltr;text-align:left;font-family:monospace;white-space:pre-wrap;background:#0c120e;color:#dfffea;border-radius:12px;padding:14px}
-div[data-testid="stDataFrame"]{border:1px solid #e0e8e2;border-radius:14px;overflow:hidden}
+.kpi .label{font-size:.82rem;color:#58675e}.kpi .value{font-size:1.46rem;font-weight:850;color:#0c1710;margin:.3rem 0}.kpi .note{font-size:.78rem;color:#6b786f;line-height:1.55}
+.panel{background:#fff;border:1px solid #dce7df;border-radius:16px;padding:18px 20px;margin:.55rem 0 1rem}.good{border-left:5px solid #61d881;background:#f3fff6}.warn{border-left:5px solid #e5b34f;background:#fffaf0}.risk{border-left:5px solid #db6a6a;background:#fff5f5}.titleline{font-weight:900;font-size:1.1rem;color:#0b1710;margin-bottom:.3rem}
+.mono{direction:ltr;text-align:left;font-family:monospace;white-space:pre-wrap;background:#0c120e;color:#dfffea;border-radius:12px;padding:14px}
+.marketrow{background:#fff;border:1px solid #e2ebe4;border-radius:12px;padding:10px 12px;margin:6px 0}.marketname{font-weight:800}.score{float:right;background:#c9ffd5;color:#07150b;padding:2px 8px;border-radius:999px;font-weight:800}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
+
+def esc(x):
+    return html.escape(str(x))
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
-def csv(name: str) -> pd.DataFrame:
+def load_csv(name):
     path = DATA / name
     if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
 
 
-def kpi(label, value, note):
+def to_float(v, default=0.0):
+    try:
+        if v in (None, "", "nan", "None"):
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+
+def to_int(v, default=0):
+    try:
+        return int(float(v))
+    except Exception:
+        return default
+
+
+def money(v):
+    try:
+        if v in (None, "", "nan", "None"):
+            return "Not verified"
+        return f"${float(v):,.0f}"
+    except Exception:
+        return "Not verified"
+
+
+def panel(title, body, kind="good"):
     st.markdown(
-        f'<div class="kpi"><div class="label">{label}</div><div class="value">{value}</div><div class="note">{note}</div></div>',
+        f'<div class="panel {kind}"><div class="titleline">{esc(title)}</div>{body}</div>',
         unsafe_allow_html=True,
     )
 
 
-def money(v):
-    return "Not verified" if pd.isna(v) else f"${float(v):,.0f}"
+def kpi(label, value, note):
+    st.markdown(
+        f'<div class="kpi"><div class="label">{esc(label)}</div><div class="value">{esc(value)}</div><div class="note">{esc(note)}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
-def panel(title, body, kind="good"):
-    st.markdown(f'<div class="panel {kind}"><div class="titleline">{title}</div>{body}</div>', unsafe_allow_html=True)
+def top_market_rows(rows, n=12):
+    rows = sorted(rows, key=lambda r: to_float(r.get("Score /100")), reverse=True)[:n]
+    for r in rows:
+        score = to_int(r.get("Score /100"))
+        st.markdown(
+            f'<div class="marketrow"><span class="marketname">#{esc(r.get("Rank"))} · {esc(r.get("Country"))}</span><span class="score">{score}/100</span><br><small>{esc(r.get("Country Positioning"))}</small></div>',
+            unsafe_allow_html=True,
+        )
 
 
 SWOT = {
@@ -122,11 +165,10 @@ EMAILS = {
     ),
 }
 
-# Header
 left, right = st.columns([1, 5])
 with left:
     if LOGO.exists():
-        st.image(str(LOGO), use_container_width=True)
+        st.image(str(LOGO))
 with right:
     st.markdown(
         '<div class="hero"><span class="tag">GCC + AFRICA</span><span class="tag">HS 950440</span><span class="tag">90-DAY GTM</span><h1>Cards Club Export Command Center</h1><p><b>From Concept to Deck.</b> Market intelligence, positioning, export risk control, buyer targeting and commercial execution.</p></div>',
@@ -149,10 +191,11 @@ page = st.sidebar.radio(
         "Files & Sources",
     ],
 )
+st.sidebar.success("Runtime: lightweight CSV mode")
 st.sidebar.caption("Research snapshot: Sep 2026. Re-validate tariffs, conformity and buyer data before live shipment.")
 
 if page == "Executive Dashboard":
-    c = st.columns(5)
+    cols = st.columns(5)
     items = [
         ("Priority markets", "50", "GCC + Africa intelligence universe"),
         ("Wave 1", "6", "UAE, Saudi, South Africa, Kuwait, Morocco, Qatar"),
@@ -160,7 +203,7 @@ if page == "Executive Dashboard":
         ("Pilot POs", "2–6", "90-day operating scenario"),
         ("Core HS", "950440", "Playing cards"),
     ]
-    for col, item in zip(c, items):
+    for col, item in zip(cols, items):
         with col:
             kpi(*item)
 
@@ -169,20 +212,13 @@ if page == "Executive Dashboard":
         "50 markets are the intelligence universe, not a simultaneous rollout. First build export proof in Wave 1, then scale using reply, RFQ, sample, margin and reorder economics.",
         "warn",
     )
-    countries = csv("countries.csv")
-    if not countries.empty:
-        top = countries.sort_values("Score /100", ascending=False).head(12).set_index("Country")
-        st.markdown("### Top market-attractiveness scores")
-        st.bar_chart(top["Score /100"], horizontal=True, color="#a6f3b5", height=430)
-        st.dataframe(
-            countries.head(12)[["Rank", "Tier", "Country", "HS950440 Import USD", "Data Year", "Score /100", "Product Focus", "Country Positioning"]],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "HS950440 Import USD": st.column_config.NumberColumn("HS950440 imports", format="$%.0f"),
-                "Score /100": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
-            },
-        )
+    countries = load_csv("countries.csv")
+    st.markdown("### Top market-attractiveness scores")
+    if countries:
+        top_market_rows(countries, 12)
+    else:
+        st.error("countries.csv is missing or empty.")
+
     a, b, c = st.columns(3)
     with a:
         panel("Avoid the commodity trap", "Core products open doors; BrandLab, destination and heritage lines are the margin engine.")
@@ -192,161 +228,138 @@ if page == "Executive Dashboard":
         panel("Build export proof", "Qualified buyer → RFQ → sample → pilot PO → reorder → case study.")
 
 elif page == "Market Intelligence":
-    countries = csv("countries.csv")
+    countries = load_csv("countries.csv")
     st.subheader("50-country market intelligence")
-    if countries.empty:
+    if not countries:
         st.error("Country dataset is missing.")
     else:
-        f1, f2, f3 = st.columns(3)
-        tiers = f1.multiselect("Tier", ["A", "B", "C", "D"], default=["A", "B", "C", "D"])
-        regions = sorted(countries["Region"].dropna().unique())
-        selected_regions = f2.multiselect("Region", regions, default=regions)
-        query = f3.text_input("Search market / positioning")
-        view = countries[countries["Tier"].isin(tiers) & countries["Region"].isin(selected_regions)].copy()
-        if query:
-            mask = view.astype(str).apply(lambda row: row.str.contains(query, case=False, na=False).any(), axis=1)
-            view = view[mask]
-        st.dataframe(
-            view[["Rank", "Tier", "Country", "Region", "HS950440 Import USD", "Data Year", "Score /100", "Product Focus", "Country Positioning", "3-Day Reply Potential"]],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "HS950440 Import USD": st.column_config.NumberColumn("Import signal", format="$%.0f"),
-                "Score /100": st.column_config.ProgressColumn("Score", min_value=0, max_value=100),
-            },
-        )
-        options = view["Country"].tolist() or countries["Country"].tolist()
+        c1, c2, c3 = st.columns(3)
+        tiers = c1.multiselect("Tier", ["A", "B", "C", "D"], default=["A", "B", "C", "D"])
+        all_regions = sorted({r.get("Region", "") for r in countries if r.get("Region")})
+        regions = c2.multiselect("Region", all_regions, default=all_regions)
+        query = c3.text_input("Search market / positioning").strip().lower()
+
+        view = []
+        for r in countries:
+            if r.get("Tier") not in tiers or r.get("Region") not in regions:
+                continue
+            if query and query not in " ".join(str(v) for v in r.values()).lower():
+                continue
+            view.append(r)
+
+        display_cols = ["Rank", "Tier", "Country", "Region", "HS950440 Import USD", "Data Year", "Score /100", "Product Focus", "Country Positioning", "3-Day Reply Potential"]
+        st.dataframe([{k: r.get(k, "") for k in display_cols} for r in view], use_container_width=True, hide_index=True)
+
+        options = [r.get("Country") for r in view] or [r.get("Country") for r in countries]
         market = st.selectbox("Country drill-down", options)
-        r = countries[countries["Country"] == market].iloc[0]
+        r = next(x for x in countries if x.get("Country") == market)
         a, b, c, d = st.columns(4)
-        a.metric("Rank", int(r["Rank"]))
-        b.metric("Tier", r["Tier"])
-        c.metric("Import signal", money(r["HS950440 Import USD"]))
-        d.metric("Attractiveness", f"{int(r['Score /100'])}/100")
-        panel("Country positioning", str(r["Country Positioning"]))
+        a.metric("Rank", to_int(r.get("Rank")))
+        b.metric("Tier", r.get("Tier", ""))
+        c.metric("Import signal", money(r.get("HS950440 Import USD")))
+        d.metric("Attractiveness", f"{to_int(r.get('Score /100'))}/100")
+        panel("Country positioning", esc(r.get("Country Positioning", "")))
         x, y = st.columns(2)
         with x:
-            st.write("**Product focus:**", r["Product Focus"])
-            st.write("**Trade route:**", r["Potential Trade Route"])
-            st.write("**Data status:**", r["Data Status"])
+            st.write("**Product focus:**", r.get("Product Focus", ""))
+            st.write("**Trade route:**", r.get("Potential Trade Route", ""))
+            st.write("**Data status:**", r.get("Data Status", ""))
         with y:
-            for label, field, maxv in [
-                ("Demand", "Demand /30", 30),
-                ("Trade access", "Trade /20", 20),
-                ("Product fit", "Fit /20", 20),
-                ("Logistics", "Logistics /15", 15),
-                ("Risk quality", "Risk /15", 15),
-            ]:
-                val = float(r[field])
+            checks = [("Demand", "Demand /30", 30), ("Trade access", "Trade /20", 20), ("Product fit", "Fit /20", 20), ("Logistics", "Logistics /15", 15), ("Risk quality", "Risk /15", 15)]
+            for label, field, maxv in checks:
+                val = to_float(r.get(field))
                 st.caption(f"{label}: {val:.0f}/{maxv}")
-                st.progress(min(val / maxv, 1.0))
+                st.progress(max(0.0, min(val / maxv, 1.0)))
         st.caption("Scores are internal decision-support heuristics, not guaranteed sales outcomes or sovereign-risk ratings.")
 
 elif page == "SWOT & Positioning":
-    panel(
-        "Master positioning",
-        "<b>Cards Club — a regional design-to-deck manufacturing partner for brands, distributors, retailers, hotels and destinations across the Middle East and Africa.</b>",
-    )
+    panel("Master positioning", "<b>Cards Club — a regional design-to-deck manufacturing partner for brands, distributors, retailers, hotels and destinations across the Middle East and Africa.</b>")
     st.write("**Architecture:** Core · Heritage · Destinations · Seasons · BrandLab · Collector")
     a, b = st.columns(2)
     for idx, key in enumerate(["Strengths", "Weaknesses", "Opportunities", "Threats"]):
         target = a if idx % 2 == 0 else b
-        kind = "good" if key in ["Strengths", "Opportunities"] else "risk"
+        kind = "good" if key in ("Strengths", "Opportunities") else "risk"
         with target:
-            items = "".join(f"<li>{x}</li>" for x in SWOT[key])
-            panel(key, f"<ul>{items}</ul>", kind)
-    panel(
-        "Competitive frame",
-        "Do not compete as the cheapest deck. Position Cards Club between anonymous commodity suppliers and high-price imported premium brands: closer, flexible, customizable, culturally relevant and export-oriented.",
-        "warn",
-    )
+            body = "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in SWOT[key]) + "</ul>"
+            panel(key, body, kind)
+    panel("Competitive frame", "Do not compete as the cheapest deck. Position Cards Club between anonymous commodity suppliers and high-price imported premium brands: closer, flexible, customizable, culturally relevant and export-oriented.", "warn")
 
 elif page == "Products & Offers":
-    products = csv("products.csv")
+    products = load_csv("products.csv")
     st.subheader("Product & offer architecture")
-    if not products.empty:
+    if products:
         st.dataframe(products, use_container_width=True, hide_index=True)
     a, b = st.columns(2)
     with a:
         panel("Margin priority", "BrandLab → Destination → Heritage → Core")
     with b:
         panel("Volume priority", "Core → Private Label → Tourism/Destination → Heritage")
-    panel(
-        "Commercial ladder",
-        "Trial MOQ → Standard MOQ → Strategic Distributor MOQ. Quote EXW → FOB → CIF with freight separated and short quote-validity windows.",
-        "warn",
-    )
+    panel("Commercial ladder", "Trial MOQ → Standard MOQ → Strategic Distributor MOQ. Quote EXW → FOB → CIF with freight separated and short quote-validity windows.", "warn")
 
 elif page == "Golden 1000":
-    golden = csv("golden1000.csv")
+    golden = load_csv("golden1000.csv")
     st.subheader("Golden 1000 account model")
-    if not golden.empty:
+    if golden:
         st.dataframe(golden, use_container_width=True, hide_index=True)
-        chart = golden.set_index("Segment")["Target Accounts"]
-        st.bar_chart(chart, horizontal=True, color="#a6f3b5", height=360)
+        st.markdown("### Segment allocation")
+        for r in golden:
+            val = to_int(r.get("Target Accounts"))
+            st.write(f"**{r.get('Segment','')} — {val} accounts**")
+            st.progress(min(val / 300.0, 1.0))
     st.markdown("### Wave 1 account allocation")
-    wave = pd.DataFrame(
-        {
-            "Market": ["UAE", "Saudi Arabia", "South Africa", "Kuwait", "Morocco", "Qatar"],
-            "Accounts": [100, 100, 70, 50, 50, 40],
-            "Primary angle": [
-                "Distributor + BrandLab + Hospitality",
-                "Distributor + BrandLab + Ramadan",
-                "Distributor + Retail + Private Label",
-                "Premium retail + corporate gifting",
-                "Tourism + distributor",
-                "Hospitality + corporate",
-            ],
-        }
-    )
+    wave = [
+        {"Market": "UAE", "Accounts": 100, "Primary angle": "Distributor + BrandLab + Hospitality"},
+        {"Market": "Saudi Arabia", "Accounts": 100, "Primary angle": "Distributor + BrandLab + Ramadan"},
+        {"Market": "South Africa", "Accounts": 70, "Primary angle": "Distributor + Retail + Private Label"},
+        {"Market": "Kuwait", "Accounts": 50, "Primary angle": "Premium retail + corporate gifting"},
+        {"Market": "Morocco", "Accounts": 50, "Primary angle": "Tourism + distributor"},
+        {"Market": "Qatar", "Accounts": 40, "Primary angle": "Hospitality + corporate"},
+    ]
     st.dataframe(wave, hide_index=True, use_container_width=True)
-    panel(
-        "Outbound operating rule",
-        "No 1,000-contact blast. Split by country × segment × offer. Start with 1–2 decision makers per company and optimize positive reply, RFQ and sample rates.",
-        "warn",
-    )
+    panel("Outbound operating rule", "No 1,000-contact blast. Split by country × segment × offer. Start with 1–2 decision makers per company and optimize positive reply, RFQ and sample rates.", "warn")
 
 elif page == "90-Day Roadmap":
-    roadmap = csv("roadmap.csv")
+    roadmap = load_csv("roadmap.csv")
     st.subheader("90-day export execution")
-    if not roadmap.empty:
+    if roadmap:
         st.dataframe(roadmap, use_container_width=True, hide_index=True)
-        for _, r in roadmap.iterrows():
-            with st.expander(f"Phase {int(r['Phase'])} · {r['Timing']} · {r['Workstream']}"):
-                st.write("**Actions:**", r["Actions"])
-                st.write("**Deliverable:**", r["Deliverable"])
-                st.write("**Success metric:**", r["Success Metric"])
+        for r in roadmap:
+            with st.expander(f"Phase {r.get('Phase','')} · {r.get('Timing','')} · {r.get('Workstream','')}"):
+                st.write("**Actions:**", r.get("Actions", ""))
+                st.write("**Deliverable:**", r.get("Deliverable", ""))
+                st.write("**Success metric:**", r.get("Success Metric", ""))
     panel("Gate 1", "No mass outbound before data, security and compliance cleanup.", "risk")
     panel("Gate 2", "No final landed-price promise before origin, freight and destination-customs validation.", "warn")
     panel("Gate 3", "No shipment before payment security, conformity and QC approval.", "risk")
 
 elif page == "Risk Register":
-    risks = csv("risks.csv")
+    risks = load_csv("risks.csv")
     st.subheader("Export risk register")
-    if risks.empty:
+    if not risks:
         st.error("Risk dataset is missing.")
     else:
         order = ["Critical", "High", "Medium", "Low"]
         selected = st.multiselect("Severity", order, default=order)
-        view = risks[risks["Severity"].isin(selected)]
+        view = [r for r in risks if r.get("Severity") in selected]
         st.dataframe(view, use_container_width=True, hide_index=True)
-        counts = view["Severity"].value_counts().reindex(order).fillna(0)
-        st.bar_chart(counts, color="#a6f3b5", height=300)
+        counts = {s: sum(1 for r in view if r.get("Severity") == s) for s in order}
+        st.markdown("### Risk mix")
+        for s in order:
+            st.write(f"**{s}: {counts[s]}**")
+            st.progress(min(counts[s] / max(len(view), 1), 1.0))
         st.markdown("### Critical + high-risk controls")
-        for _, r in risks[risks["Severity"].isin(["Critical", "High"])].iterrows():
-            with st.expander(f"{r['ID']} · {r['Risk']} — {r['Severity']}"):
-                st.write("**Impact:**", r["Impact"])
-                st.write("**Mitigation:**", r["Mitigation"])
-                st.write(f"**Owner:** {r['Owner']} · **Gate:** {r['Deadline / Gate']}")
+        for r in risks:
+            if r.get("Severity") not in ("Critical", "High"):
+                continue
+            with st.expander(f"{r.get('ID','')} · {r.get('Risk','')} — {r.get('Severity','')}"):
+                st.write("**Impact:**", r.get("Impact", ""))
+                st.write("**Mitigation:**", r.get("Mitigation", ""))
+                st.write(f"**Owner:** {r.get('Owner','')} · **Gate:** {r.get('Deadline / Gate','')}")
 
 elif page == "Customs & Trade":
-    trade = csv("trade.csv")
-    panel(
-        "Non-negotiable",
-        "Never market ‘zero customs guaranteed’. Preferential treatment depends on HS classification, current agreement implementation, Rules of Origin, documentary evidence and destination-customs acceptance.",
-        "risk",
-    )
-    if not trade.empty:
+    trade = load_csv("trade.csv")
+    panel("Non-negotiable", "Never market ‘zero customs guaranteed’. Preferential treatment depends on HS classification, current agreement implementation, Rules of Origin, documentary evidence and destination-customs acceptance.", "risk")
+    if trade:
         st.dataframe(trade, use_container_width=True, hide_index=True)
     st.markdown("### Pre-shipment gate")
     checks = [
@@ -367,35 +380,28 @@ elif page == "Email Campaigns":
     subject, preview, body = EMAILS[name]
     a, b = st.columns(2)
     with a:
-        panel("Subject", subject)
+        panel("Subject", esc(subject))
     with b:
-        panel("Preview", preview)
-    st.markdown(f'<div class="mono">{body}</div>', unsafe_allow_html=True)
+        panel("Preview", esc(preview))
+    st.markdown(f'<div class="mono">{esc(body)}</div>', unsafe_allow_html=True)
     st.caption("Use as a segment-specific starting point; personalize account context and keep the first CTA low-friction.")
 
 elif page == "Sales Scenarios":
     st.subheader("90-day sales scenarios")
     st.caption("Operating scenarios, not guaranteed forecasts.")
-    scenarios = pd.DataFrame(
-        [
-            ["Conservative", 1000, "15–25", "2–5", "0–1"],
-            ["Base", 1000, "30–50", "6–15", "2–4"],
-            ["Strong", 1000, "50–80+", "12–25", "5–8"],
-        ],
-        columns=["Scenario", "Target companies", "Replies", "Qualified buyers", "Pilot POs"],
-    )
+    scenarios = [
+        {"Scenario": "Conservative", "Target companies": 1000, "Replies": "15–25", "Qualified buyers": "2–5", "Pilot POs": "0–1"},
+        {"Scenario": "Base", "Target companies": 1000, "Replies": "30–50", "Qualified buyers": "6–15", "Pilot POs": "2–4"},
+        {"Scenario": "Strong", "Target companies": 1000, "Replies": "50–80+", "Qualified buyers": "12–25", "Pilot POs": "5–8"},
+    ]
     st.dataframe(scenarios, hide_index=True, use_container_width=True)
     panel("KPI tree", "Deliverability → Reply → Positive reply → Qualified buyer → RFQ → Sample → PO → Gross margin → Reorder.")
     panel("72-hour goal", "Buyer interest, catalog/RFQ/sample intent — not assuming closed orders from cold email.", "warn")
 
 elif page == "Files & Sources":
-    sources = csv("sources.csv")
+    sources = load_csv("sources.csv")
     st.subheader("Runtime files & source index")
-    panel(
-        "Deployment architecture",
-        "The dashboard uses small sanitized CSV files for fast startup. The original raw workbook is intentionally not published because it contains sensitive credentials / banking-related information. Heavy source documents are also kept out of the runtime bundle to reduce cold-start and repository weight.",
-        "warn",
-    )
+    panel("Deployment architecture", "The dashboard uses small sanitized CSV files for fast startup. The original raw workbook is intentionally not published because it contains sensitive credentials / banking-related information. Heavy source documents are also kept out of the runtime bundle to reduce cold-start and repository weight.", "warn")
     st.markdown("### Download sanitized runtime data")
     files = ["countries.csv", "products.csv", "risks.csv", "roadmap.csv", "golden1000.csv", "trade.csv", "sources.csv"]
     cols = st.columns(3)
@@ -403,14 +409,7 @@ elif page == "Files & Sources":
         path = DATA / name
         if path.exists():
             with cols[i % 3]:
-                st.download_button(
-                    f"Download {name}",
-                    path.read_bytes(),
-                    file_name=name,
-                    mime="text/csv",
-                    use_container_width=True,
-                    key=f"download-{name}",
-                )
-    if not sources.empty:
+                st.download_button(f"Download {name}", path.read_bytes(), file_name=name, mime="text/csv", key=f"download-{name}")
+    if sources:
         st.markdown("### Research & source register")
         st.dataframe(sources, use_container_width=True, hide_index=True)
